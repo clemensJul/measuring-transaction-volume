@@ -1,0 +1,32 @@
+
+start_block: 22606143            # June 1st 2025
+end_block: 22829343
+#end_block: 22606543  # 23264566              # August 31st 2025
+batch_size: 100
+
+token:
+  # eth special case - do not change
+  - name: ETH
+    address: "ethereum"
+    active: True
+    decimals: 18
+  - name: USDT
+    address: "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+    active: True
+    decimals: 6
+  - name: USDC
+    address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    active: True
+    decimals: 6
+  - name: WBTC
+    address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"
+    active: True
+    decimals: 8
+  - name: USDE
+    address: "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
+    active: True
+    decimals: 18
+  - name: CBBTC
+    address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"
+    active: True
+    decimals: 8
