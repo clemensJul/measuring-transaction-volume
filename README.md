@@ -1,14 +1,13 @@
-# Measuring Transaction Volume
-
+# Measuring Transaction Volume.
 Analysis of transaction streams between wallets. Compares the tracked transaction volume between two algorithms and plots native Ethereum and ERC-20 transactions.
+
 ---
 ## Table of Contents
 - Overview  
 - Installation  
 - Usage  
 - Attribution
-- License  
-
+- License
 ---
 
 ## Overview
@@ -31,7 +30,7 @@ python3 pip install -r requirements.txt
 
 ---
 ## Usage
-You can either analyze Ethereum native tokens or ERC-20 tokens. ERC-20 get converted to their daily value amount. 
+You can either analyze Ethereum native tokens or ERC-20 tokens. The transaction volume is converted to USD using one price per day.
 
 In ./config/ you can set ERC-20 token transactions collected. Ethereum blocks looked at and other configs.
 
@@ -46,5 +45,6 @@ COIN_GECKO_API_KEY="xxx"
 ---
 ## Attribution
 Price data by CoinGecko // TODO: add logo and link if published
+
 ---
 ## License  

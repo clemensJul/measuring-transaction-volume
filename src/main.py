@@ -41,10 +41,6 @@ async def main():
                 desc="Indexing blocks",
                 unit="batch",
         )
-        def callback(t0,t1,t2,t3):
-            progress.set_postfix_str(
-                f"gather={t1 - t0}s fetch={t2 - t1}s blocks={t3 - t2}s",
-            )
 
         for batch_start in progress:
             if cancellation_token.is_canceled():
@@ -54,8 +50,8 @@ async def main():
                 batch_start + config["batch_size"],
                 config["end_block"],
             )
-            
-            await dc.get_blocks(batch_start, batch_end, callback)
+            await dc.get_blocks(batch_start, batch_end)
+            print("current batch " + str(batch_start) + " to " + str(batch_end))
     finally:
         await dc.close()
 
