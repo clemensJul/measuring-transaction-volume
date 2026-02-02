@@ -8,7 +8,7 @@ DB_PATH = PROJECT_ROOT / "data" / "main.duckdb"
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS blocks (
   "number"      BIGINT PRIMARY KEY,
-  "timestamp"   TIMESTAMPTZ
+  "timestamp"   TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
@@ -20,9 +20,10 @@ CREATE TABLE IF NOT EXISTS transactions (
   "to_addr"      VARCHAR,
   "amount"       HUGEINT,
   "usd_value"    DOUBLE,
+  "is_dex_swap"  BOOLEAN,
   PRIMARY KEY (hash, log_number)
 );
-
+                                                                                                                
 CREATE TABLE IF NOT EXISTS block_ingestions (
   "block_number" BIGINT REFERENCES blocks(number),
   "coin"         VARCHAR,
@@ -36,7 +37,7 @@ CREATE TABLE IF NOT EXISTS coin_values (
   PRIMARY KEY (coin, date)
 );
 
-CREATE INDEX IF NOT EXISTS idx_coin ON transactions(block_number, coin);
+CREATE INDEX IF NOT EXISTS idx_coin ON transactions(block_number, coin, is_dex_swap);
 CREATE INDEX IF NOT EXISTS idx_coin_value ON coin_values(coin, date);
 """
 

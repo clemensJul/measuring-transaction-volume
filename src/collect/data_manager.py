@@ -1,3 +1,4 @@
+from decimal import Decimal
 from pathlib import Path
 import asyncio
 from datetime import datetime, timezone, timedelta
@@ -5,13 +6,16 @@ from collect.db_connection import open_db
 from coingecko_sdk import Coingecko
 from collect.rpc_client import RPCClient
 import pandas as pd
+from eth_utils import keccak, event_signature_to_log_topic
+import numpy as np
 
-
+ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = PROJECT_ROOT / "data" / "main.duckdb"
 TRANSFER_TOPIC = (
     "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 )
+
 ASSET_PLATFORM = 'ethereum'
 ETH_NAME ="ETH"
 
@@ -28,6 +32,10 @@ class DataCollector:
             demo_api_key=config["COIN_GECKO_API_KEY"],
             environment="demo"
             )
+        self.dex_swap = [
+            "0x"+event_signature_to_log_topic(x).hex()
+            for x in config["dex_events"]
+        ]
         self.db = open_db()
         self.price_data = {}
         self.active_coins = list(filter(lambda x: x["active"] == True, self.config["token"]))
@@ -46,8 +54,7 @@ class DataCollector:
         await self.rpc_client.close()
         self.db.close()
 
-
-    async def get_blocks(self, start_block, end_block):
+    async def get_blocks(self, start_block, end_block, with_dex = False):
         # check if coins are in database
         active_coins = [x["name"] for x in self.active_coins]
         current_blocks = list(range(start_block, end_block))
@@ -57,28 +64,60 @@ class DataCollector:
         if len(missing) != 0:
             await self.fetch_and_add_missing_to_db(missing)
 
-        blocks =  self.db.execute(
+
+        if with_dex:
+            return self.db.execute(
+                """
+                SELECT
+                  b.number,
+                  b.timestamp,
+                  list(
+                    struct_pack(
+                      coin        := t.coin,
+                      "from"      := t."from_addr",
+                      "to"        := t."to_addr",
+                      amount      := t.amount,
+                      usd_value   := t.usd_value,
+                      is_dex_swap := t.is_dex_swap              
+                    )
+                  ) AS transactions
+                FROM blocks b
+                LEFT JOIN transactions t
+                  ON t.block_number = b.number
+                WHERE b.number BETWEEN ? AND ?
+                GROUP BY b.number, b.timestamp
+                ORDER BY b.timestamp;
+                """,
+                (start_block, end_block - 1)
+            ).fetchall()
+        return self.db.execute(
             """
             SELECT
               b.number,
               b.timestamp,
-              list(
-                struct_pack(
-                  coin    := t.coin,
-                  "from"  := t."from_addr",
-                  "to"    := t."to_addr",
-                  amount  := t.amount,
-                  value   := t.usd_value
-                )
+              coalesce(
+                list(
+                  struct_pack(
+                    coin        := t.coin,
+                    "from"      := t."from_addr",
+                    "to"        := t."to_addr",
+                    amount      := t.amount,
+                    usd_value   := t.usd_value,
+                    is_dex_swap := t.is_dex_swap
+                  )
+                ),
+                []
               ) AS transactions
             FROM blocks b
             LEFT JOIN transactions t
               ON t.block_number = b.number
-            WHERE b.number = 100
-            GROUP BY b.number, b.timestamp;
-            """
+             AND coalesce(t.is_dex_swap, false) = false
+            WHERE b.number BETWEEN ? AND ?
+            GROUP BY b.number, b.timestamp
+            ORDER BY b.timestamp;
+            """,
+            (start_block, end_block - 1),
         ).fetchall()
-        return blocks
 
     async def get_missing(self,current_blocks, active_coins):
         return self.db.execute(
@@ -112,9 +151,9 @@ class DataCollector:
     async def get_usd_value(self, coin ,timestamp, amount):
         date = datetime.fromisoformat(timestamp).date()
         if self.current_date == date:
-            todays_coin_price = self.current_prices.get(coin["name"])
-            if todays_coin_price is not None:
-                return float(amount) * float(todays_coin_price) / (10 ** coin["decimals"])
+            price = self.current_prices.get(coin["name"])
+            if price is not None:
+                return np.float64(amount * price / (10 ** coin["decimals"]))
 
         row = self.db.execute(
             """
@@ -164,8 +203,7 @@ class DataCollector:
 
         self.current_date = date
         self.current_prices[coin["name"]] = row[2]
-
-        return float(amount) * row[2]  / (10 ** coin["decimals"])
+        return np.float64(amount * row[2] / (10 ** coin["decimals"]))
 
     async def fetch_and_add_missing_to_db(self, missing):
         # missing is a list of tuples (block_number, coin)
@@ -188,55 +226,75 @@ class DataCollector:
 
         for block in gathered_blocks:
             number = int(block["number"], 16)
-            timestamp = datetime.fromtimestamp(int(block["timestamp"], 16), tz=timezone.utc).isoformat()
-            coin = self.active_coins_dict.get(ASSET_PLATFORM, None)
-            if coin is not None and coin["name"] in missing_dict[number]:
-                sanitized_transactions = [
-                    (
-                        tx["hash"],
-                        -1,
-                        number,
-                        coin["name"],
-                        tx["from"],
-                        tx["to"],
-                        int(tx["value"], 16),
-                        await self.get_usd_value(coin, timestamp, int(tx["value"], 16), )
-                    )
-                    for tx in filter(lambda x: int(x["value"], 16) != 0, block["transactions"])
-                ]
-                if len(sanitized_transactions) > 0:
-                    transactions_to_save.extend(sanitized_transactions)
-                digests_to_save.append((number, coin["name"]))
+            timestamp = datetime.fromtimestamp(int(block["timestamp"], 16)).isoformat()
 
-            erc20_transactions = []
-            for receipt in block["receipts"]:
-                for log in receipt["logs"]:
+            transactions_in_block = []
+            was_dex_swap = False
+            for transaction in zip(block["transactions"], block["receipts"]):
+                transaction_to_add = []
+                coin = self.active_coins_dict.get(ASSET_PLATFORM, None)
+                if coin is not None and coin["name"] in missing_dict[number]:
+                    tx = transaction[0]
+                    if (tx["from"] is not None
+                            and tx["to"] is not None
+                                and tx["from"] != ZERO_ADDRESS
+                                    and tx["to"] != ZERO_ADDRESS ):
+                        transaction_to_add.append(
+                            [
+                                tx["hash"],
+                                -1,
+                                number,
+                                coin["name"],
+                                tx["from"].lower(),
+                                tx["to"].lower(),
+                                int(tx["value"], 16),
+                                await self.get_usd_value(coin, timestamp, int(tx["value"], 16), ),
+                                False
+                            ]
+                        )
+                    digests_to_save.append((number, coin["name"]))
+                # erc20
+                for log in transaction[1]["logs"]:
                     topics = log.get("topics", [])
-                    if not topics or topics[0].lower() != TRANSFER_TOPIC:
+
+                    if not topics:
                         continue
 
-                    token_addr = log["address"].lower()
-                    coin = self.active_coins_dict.get(token_addr)
-                    if coin is None:
-                        continue  # not a tracked token
+                    event = topics[0].lower()
 
-                    if coin["name"] not in missing_dict[number]:
-                        continue # coin has been tracked before
+                    if event in self.dex_swap:
+                        was_dex_swap = True
+                        break
 
-                    erc20_transactions.append(
-                        (
-                            log["transactionHash"],
-                            int(log["logIndex"],16),
-                            number,
-                            coin["name"],
-                            "0x" + topics[1][-40:].lower(),
-                            "0x" + topics[2][-40:].lower(),
-                            int(log["data"], 16),
-                            await self.get_usd_value(coin, timestamp, int(log["data"], 16)),
-                        )
-                    )
-            if len(erc20_transactions) > 0:
-                transactions_to_save.extend(erc20_transactions)
+                    if event == TRANSFER_TOPIC:
+                        token_addr = log["address"].lower()
+                        coin = self.active_coins_dict.get(token_addr)
+                        if coin is None:
+                            continue  # not a tracked token
+
+                        if coin["name"] not in missing_dict[number]:
+                            continue  # coin has been tracked before
+
+                        from_addr = "0x" + topics[1][-40:].lower()
+                        to_addr   = "0x" + topics[2][-40:].lower()
+
+                        if from_addr != ZERO_ADDRESS and to_addr != ZERO_ADDRESS:
+                            transaction_to_add.append(
+                                [
+                                    log["transactionHash"],
+                                    int(log["logIndex"], 16),
+                                    number,
+                                    coin["name"],
+                                    from_addr,
+                                    to_addr,
+                                    int(log["data"], 16),
+                                    await self.get_usd_value(coin, timestamp, int(log["data"], 16)),
+                                    False,
+                                ]
+                            )
+                if  not was_dex_swap:
+                    transactions_in_block.extend(transaction_to_add)
+
             digestions = [
                 (number, val["name"])
                 for val in self.active_coins_dict.values()
@@ -244,12 +302,12 @@ class DataCollector:
             if len(digestions) == self.num_active_coins:
                 blocks_to_save.append((number, timestamp))
             digests_to_save.extend(digestions)
-        #print("time to filter and sort " + str(datetime.now(timezone.utc) - now))
-        #now = datetime.now(timezone.utc)
+            if len(transactions_in_block) > 0:
+                transactions_to_save.extend(transactions_in_block)
 
         blocks_df = pd.DataFrame(blocks_to_save, columns=["number", "timestamp"])
         digests_df = pd.DataFrame(digests_to_save, columns=["block_number", "coin"])
-        tx_df = pd.DataFrame(transactions_to_save, columns=["hash", "log_number","block_number", "coin", "from_addr", "to_addr", "amount", "usd_value"])
+        tx_df = pd.DataFrame(transactions_to_save, columns=["hash", "log_number","block_number", "coin", "from_addr", "to_addr", "amount", "usd_value", "is_dex_swap"])
         try:
             # 5. Bulk Insert via DuckDB
             # DuckDB can read the dataframe variables (blocks_df, etc.) directly.
@@ -264,8 +322,8 @@ class DataCollector:
 
             if not tx_df.empty:
                 self.db.execute("""
-                        INSERT OR IGNORE INTO transactions (hash, log_number, block_number, coin, from_addr, to_addr, amount, usd_value)
-                        SELECT hash, log_number, block_number, coin, from_addr, to_addr, amount, usd_value FROM tx_df
+                        INSERT OR IGNORE INTO transactions (hash, log_number, block_number, coin, from_addr, to_addr, amount, usd_value , is_dex_swap)
+                        SELECT hash, log_number, block_number, coin, from_addr, to_addr, amount, usd_value, is_dex_swap FROM tx_df
                     """)
             self.db.execute("COMMIT")
             #print(f"Time to save: {datetime.now(timezone.utc) - now}")

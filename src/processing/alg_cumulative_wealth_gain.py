@@ -26,12 +26,12 @@ class CumulativeWealthGain:
 
     def rollback_map(self, txs):
         for tx in txs:
-            self.update_map_only(tx["to"], tx["from"], tx["amount"])
+            self.update_map_only(tx["to"], tx["from"], tx["usd_value"])
 
     def execute_txs(self, txs: list) -> int:
         block_gain = 0
         for tx in txs:
-            g = self.calc_gain(tx["from"], tx["to"], tx["amount"])
+            g = self.calc_gain(tx["from"], tx["to"], tx["usd_value"])
             block_gain += g
         return block_gain
 

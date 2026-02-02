@@ -15,7 +15,7 @@ class TransactionCounting:
             self.previous_tx.popleft()
 
         #add new transaction
-        transaction_sum = sum(tx['amount'] for tx in block['transactions'])
+        transaction_sum = sum(tx['usd_value'] for tx in block['transactions'])
         self.previous_tx.append((current_time, transaction_sum))
         self.gain_total = self.gain_total + transaction_sum
         return self.gain_total

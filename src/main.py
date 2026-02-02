@@ -50,8 +50,12 @@ async def main():
                 batch_start + config["batch_size"],
                 config["end_block"],
             )
-            await dc.get_blocks(batch_start, batch_end)
-            print("current batch " + str(batch_start) + " to " + str(batch_end))
+            blocks = await dc.get_blocks(batch_start, batch_end)
+
+
+
+
+
     finally:
         await dc.close()
 
