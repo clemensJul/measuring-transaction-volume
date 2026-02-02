@@ -1,5 +1,7 @@
 import asyncio
 from pathlib import Path
+
+import numpy
 import yaml
 import os
 from tqdm import tqdm
@@ -89,27 +91,35 @@ async def main():
             shared_xaxes=True,
             vertical_spacing=0.04,
             specs=[[{"secondary_y": True}] for _ in cumulative_wealth_gain],
-            subplot_titles=[f"{alg.delta} epoch Δ-time window:" for alg in cumulative_wealth_gain],
         )
 
         for i, (wg, tc) in enumerate(zip(cumulative_wealth_gain, transaction_counting), start=1):
+            subplot_id = f"Δ={wg.delta}"
+
+
+
+            # wealth gain trace
             fig.add_trace(
                 go.Scatter(
                     x=timestamps,
                     y=wg.values,
                     mode="lines",
                     name=f"Cumulative Wealth Gain: {wg.delta} slots",
-
+                    legendgroup=subplot_id,
+                    showlegend=True,
                 ),
                 row = i,
                 col = 1,
             )
+            # transaction counting trace
             fig.add_trace(
                 go.Scatter(
                     x=timestamps,
                     y=tc.values,
                     mode="lines",
-                    name=f"Transaction Counting: {tc.delta} slots",
+                    name=f"Transaction Counting: {tc.delta} Slots",
+                    legendgroup=subplot_id,
+                    showlegend=True,
                 ),
                 row=i,
                 col=1,
@@ -118,13 +128,56 @@ async def main():
             # traces[0].algorithm.time_sliding_window <- get average and display it
             # traces[1].algorithm.time_build_up_window <- get average and display it
             # traces[1].algorithm.time_sliding_window <- get average and display it
-            #fig.add_hline(
-            #    y=THRESHOLD_D,
-            #    line_width=1.2,
-            #    line_color="black",
-            #    col=1,
-            #    row=i,
-            #)
+
+            # line when full window is reached
+            x_line = timestamps[0] + datetime.timedelta(seconds=12 * wg.delta)
+            fig.add_vline(
+                x = x_line,
+                line_width=1.2,
+                line_color="black",
+                col=1,
+                row=i,
+                legendgroup=subplot_id,
+                showlegend=True,
+            )
+
+            differences = numpy.divide(
+                wg.values,
+                tc.values,
+                out=numpy.zeros_like(wg.values, dtype=float),
+                where=tc.values != 0
+            )
+
+            window = max(wg.delta, 1000)
+            kernel = numpy.ones(window) / window
+            rolling_avg = numpy.convolve(differences, kernel, mode="valid")
+            rolling_timestamps = timestamps[window - 1:]
+            fig.add_trace(
+                go.Scatter(
+                    x=rolling_timestamps,
+                    y=rolling_avg * 100,
+                    mode="lines",
+                    name=f"Rolling Avg (Δ={wg.delta})",
+                    line=dict(dash="dot", width=2),
+                    legendgroup=subplot_id,
+                    showlegend=True,
+                ),
+                row=i,
+                col=1,
+                secondary_y=True,
+            )
+
+            fig.update_yaxes(title_text=f"Transaction volume in USD",
+                             col=1,
+                             row=i,
+                             secondary_y=False
+                             )
+            fig.update_yaxes(title_text=f"Improvement in % of total volume",
+                             col=1,
+                             row=i,
+                             secondary_y=True,
+                             range=[0,101]
+                             )
 
         fig.update_layout(
             title="Dynamic Transaction Data Analysis",
@@ -141,7 +194,6 @@ async def main():
         )
 
         fig.update_xaxes(title_text="Date")
-        fig.update_yaxes(title_text="Transaction volume in USD")
         fig.show()
 
         # analyse

@@ -7,7 +7,6 @@ Analysis of transaction streams between wallets. Compares the tracked transactio
 - Installation  
 - Usage  
 - Attribution
-- License
 ---
 
 ## Overview
@@ -39,9 +38,6 @@ You need access to a Validator node and a coin gecko api key for the daily price
 RCP_URL="localhost:5000"
 COIN_GECKO_API_KEY="xxx"
 ```
----
-## Configuration  
-
 ---
 ## Attribution
 Price data powered by [CoinGecko API](https://www.coingecko.com)

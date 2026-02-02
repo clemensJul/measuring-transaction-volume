@@ -206,24 +206,16 @@ class DataCollector:
         return np.float64(amount * row[2] / (10 ** coin["decimals"]))
 
     async def fetch_and_add_missing_to_db(self, missing):
-        # missing is a list of tuples (block_number, coin)
-
-        now = datetime.now(timezone.utc)
         missing_dict = {
             m[0]: m[1]
             for m in missing
         }
         tasks = [self.rpc_client.process_block(b[0]) for b in missing]
-
         gathered_blocks = await asyncio.gather(*tasks)
-        #print("time to fetch " + str(datetime.now(timezone.utc) - now))
-        #now = datetime.now(timezone.utc)
 
-        blocks_to_save = []
-        digests_to_save = []
-        transactions_to_save = []
-
-
+        blocks_in_batch = []
+        digests_in_batch = []
+        transactions_in_batch = []
         for block in gathered_blocks:
             number = int(block["number"], 16)
             timestamp = datetime.fromtimestamp(int(block["timestamp"], 16)).isoformat()
@@ -231,7 +223,7 @@ class DataCollector:
             transactions_in_block = []
             was_dex_swap = False
             for transaction in zip(block["transactions"], block["receipts"]):
-                transaction_to_add = []
+                coin_movements_in_transaction = []
                 coin = self.active_coins_dict.get(ASSET_PLATFORM, None)
                 if coin is not None and coin["name"] in missing_dict[number]:
                     tx = transaction[0]
@@ -239,7 +231,7 @@ class DataCollector:
                             and tx["to"] is not None
                                 and tx["from"] != ZERO_ADDRESS
                                     and tx["to"] != ZERO_ADDRESS ):
-                        transaction_to_add.append(
+                        coin_movements_in_transaction.append(
                             [
                                 tx["hash"],
                                 -1,
@@ -252,7 +244,8 @@ class DataCollector:
                                 False
                             ]
                         )
-                    digests_to_save.append((number, coin["name"]))
+                    digests_in_batch.append((number, coin["name"]))
+
                 # erc20
                 for log in transaction[1]["logs"]:
                     topics = log.get("topics", [])
@@ -279,7 +272,7 @@ class DataCollector:
                         to_addr   = "0x" + topics[2][-40:].lower()
 
                         if from_addr != ZERO_ADDRESS and to_addr != ZERO_ADDRESS:
-                            transaction_to_add.append(
+                            coin_movements_in_transaction.append(
                                 [
                                     log["transactionHash"],
                                     int(log["logIndex"], 16),
@@ -292,52 +285,35 @@ class DataCollector:
                                     False,
                                 ]
                             )
-                if  not was_dex_swap:
-                    transactions_in_block.extend(transaction_to_add)
-
+                if  was_dex_swap:
+                    for tx in coin_movements_in_transaction:
+                        tx[8] = True
+                transactions_in_block.extend(coin_movements_in_transaction)
             digestions = [
                 (number, val["name"])
                 for val in self.active_coins_dict.values()
             ]
             if len(digestions) == self.num_active_coins:
-                blocks_to_save.append((number, timestamp))
-            digests_to_save.extend(digestions)
+                blocks_in_batch.append((number, timestamp))
+            digests_in_batch.extend(digestions)
             if len(transactions_in_block) > 0:
-                transactions_to_save.extend(transactions_in_block)
+                transactions_in_batch.extend(transactions_in_block)
 
-        blocks_df = pd.DataFrame(blocks_to_save, columns=["number", "timestamp"])
-        digests_df = pd.DataFrame(digests_to_save, columns=["block_number", "coin"])
-        tx_df = pd.DataFrame(transactions_to_save, columns=["hash", "log_number","block_number", "coin", "from_addr", "to_addr", "amount", "usd_value", "is_dex_swap"])
+        blocks_df = pd.DataFrame(blocks_in_batch, columns=["number", "timestamp"])
+        digests_df = pd.DataFrame(digests_in_batch, columns=["block_number", "coin"])
+        tx_df = pd.DataFrame(transactions_in_batch, columns=["hash", "log_number","block_number", "coin", "from_addr", "to_addr", "amount", "usd_value", "is_dex_swap"])
         try:
-            # 5. Bulk Insert via DuckDB
-            # DuckDB can read the dataframe variables (blocks_df, etc.) directly.
-            #self.db.execute("BEGIN TRANSACTION")
             self.db.execute("BEGIN TRANSACTION")
-
             if not blocks_df.empty:
                 self.db.execute("INSERT OR IGNORE INTO blocks SELECT number, timestamp FROM blocks_df")
-
             if not digests_df.empty:
                 self.db.execute("INSERT OR IGNORE INTO block_ingestions SELECT block_number, coin FROM digests_df")
-
             if not tx_df.empty:
-                self.db.execute("""
+                self.db.execute("""                                                  ‚
                         INSERT OR IGNORE INTO transactions (hash, log_number, block_number, coin, from_addr, to_addr, amount, usd_value , is_dex_swap)
                         SELECT hash, log_number, block_number, coin, from_addr, to_addr, amount, usd_value, is_dex_swap FROM tx_df
                     """)
             self.db.execute("COMMIT")
-            #print(f"Time to save: {datetime.now(timezone.utc) - now}")
         except Exception as e:
             self.db.execute("ROLLBACK")
             print(f"ROLLBACK batch error: {e}")
-
-
-
-
-
-
-
-
-
-
-        

@@ -52,10 +52,6 @@ async def main():
             )
             blocks = await dc.get_blocks(batch_start, batch_end)
 
-
-
-
-
     finally:
         await dc.close()
 
