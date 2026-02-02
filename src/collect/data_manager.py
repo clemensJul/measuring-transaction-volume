@@ -15,6 +15,7 @@ DB_PATH = PROJECT_ROOT / "data" / "main.duckdb"
 TRANSFER_TOPIC = (
     "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 )
+BIGINT_MAX = 2**63 - 1
 
 ASSET_PLATFORM = 'ethereum'
 ETH_NAME ="ETH"
@@ -54,17 +55,18 @@ class DataCollector:
         await self.rpc_client.close()
         self.db.close()
 
-    async def get_blocks(self, start_block, end_block, with_dex = False):
-        # check if coins are in database
+    async def make_blocks_in_db_available(self, start_block, end_block):
+       # check if coins are in database
         active_coins = [x["name"] for x in self.active_coins]
         current_blocks = list(range(start_block, end_block))
         missing = await self.get_missing(current_blocks, active_coins)
 
-        # add missing coins to database
+       # add missing coins to database
         if len(missing) != 0:
             await self.fetch_and_add_missing_to_db(missing)
 
-
+    async def get_blocks(self, start_block, end_block, with_dex = False):
+        await self.make_blocks_in_db_available(start_block, end_block)
         if with_dex:
             return self.db.execute(
                 """
@@ -148,8 +150,8 @@ class DataCollector:
             """,
             (current_blocks, active_coins)
         ).fetchall()
-    async def get_usd_value(self, coin ,timestamp, amount):
-        date = datetime.fromisoformat(timestamp).date()
+    async def get_usd_value(self, coin, datetime_of_block, amount):
+        date = datetime_of_block.date()
         if self.current_date == date:
             price = self.current_prices.get(coin["name"])
             if price is not None:
@@ -184,7 +186,7 @@ class DataCollector:
             rows_to_insert = [
                 (
                     coin["name"],
-                    datetime.fromtimestamp(price[0] / 1000, tz=timezone.utc).date().isoformat(),
+                    datetime_of_block.fromtimestamp(price[0] / 1000).date().isoformat(),
                     price[1]
                 )
                 for price in resp.prices
@@ -218,11 +220,11 @@ class DataCollector:
         transactions_in_batch = []
         for block in gathered_blocks:
             number = int(block["number"], 16)
-            timestamp = datetime.fromtimestamp(int(block["timestamp"], 16)).isoformat()
+            datetime_block = datetime.fromtimestamp(int(block["timestamp"], 16))
 
             transactions_in_block = []
-            was_dex_swap = False
             for transaction in zip(block["transactions"], block["receipts"]):
+                was_dex_swap = False
                 coin_movements_in_transaction = []
                 coin = self.active_coins_dict.get(ASSET_PLATFORM, None)
                 if coin is not None and coin["name"] in missing_dict[number]:
@@ -239,8 +241,8 @@ class DataCollector:
                                 coin["name"],
                                 tx["from"].lower(),
                                 tx["to"].lower(),
-                                int(tx["value"], 16),
-                                await self.get_usd_value(coin, timestamp, int(tx["value"], 16), ),
+                                min(int(tx["value"], 16),BIGINT_MAX),
+                                await self.get_usd_value(coin, datetime_block, int(tx["value"], 16), ),
                                 False
                             ]
                         )
@@ -280,11 +282,13 @@ class DataCollector:
                                     coin["name"],
                                     from_addr,
                                     to_addr,
-                                    int(log["data"], 16),
-                                    await self.get_usd_value(coin, timestamp, int(log["data"], 16)),
+                                    min(int(log["data"], 16),BIGINT_MAX),
+                                    await self.get_usd_value(coin, datetime_block, int(log["data"], 16)),
                                     False,
                                 ]
                             )
+                            if coin_movements_in_transaction[-1][6] > BIGINT_MAX:
+                                print("value too big")
                 if  was_dex_swap:
                     for tx in coin_movements_in_transaction:
                         tx[8] = True
@@ -294,7 +298,7 @@ class DataCollector:
                 for val in self.active_coins_dict.values()
             ]
             if len(digestions) == self.num_active_coins:
-                blocks_in_batch.append((number, timestamp))
+                blocks_in_batch.append((number, datetime_block.isoformat()))
             digests_in_batch.extend(digestions)
             if len(transactions_in_block) > 0:
                 transactions_in_batch.extend(transactions_in_block)
@@ -309,7 +313,7 @@ class DataCollector:
             if not digests_df.empty:
                 self.db.execute("INSERT OR IGNORE INTO block_ingestions SELECT block_number, coin FROM digests_df")
             if not tx_df.empty:
-                self.db.execute("""                                                  ‚
+                self.db.execute("""                                                  
                         INSERT OR IGNORE INTO transactions (hash, log_number, block_number, coin, from_addr, to_addr, amount, usd_value , is_dex_swap)
                         SELECT hash, log_number, block_number, coin, from_addr, to_addr, amount, usd_value, is_dex_swap FROM tx_df
                     """)

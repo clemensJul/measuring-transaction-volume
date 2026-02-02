@@ -12,13 +12,13 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from processing.alg_cumulative_wealth_gain import CumulativeWealthGain
 from processing.alg_transaction_counting import TransactionCounting
-from speed_comparision import SpeedComparison
-from value_comparision import ValueComparison
+from analysis.speed_comparision import SpeedComparison
+from analysis.value_comparision import ValueComparison
 import signal
 import datetime
 
 THRESHOLD_D = 32 * 10 ** 18
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 def get_config() -> dict:
     load_dotenv(PROJECT_ROOT / ".env")
@@ -71,7 +71,7 @@ async def main():
                 config["end_block"],
             )
             #collect
-            blocks = await dc.get_blocks(batch_start, batch_end, True)
+            blocks = await dc.get_blocks(batch_start, batch_end, False)
 
             # process
             for block in blocks:
@@ -85,19 +85,11 @@ async def main():
                     tc.run_on_block(test_block)
                 timestamps.append(datetime.datetime.fromtimestamp(test_block["timestamp"]))
 
-        fig = make_subplots(
-            len(cumulative_wealth_gain),
-            cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.04,
-            specs=[[{"secondary_y": True}] for _ in cumulative_wealth_gain],
-        )
+        for wg, tc in zip(cumulative_wealth_gain, transaction_counting):
+            fig = make_subplots(specs=[[{"secondary_y": True}]]
+                                
 
-        for i, (wg, tc) in enumerate(zip(cumulative_wealth_gain, transaction_counting), start=1):
-            subplot_id = f"Δ={wg.delta}"
-
-
-
+                                )
             # wealth gain trace
             fig.add_trace(
                 go.Scatter(
@@ -105,11 +97,7 @@ async def main():
                     y=wg.values,
                     mode="lines",
                     name=f"Cumulative Wealth Gain: {wg.delta} slots",
-                    legendgroup=subplot_id,
-                    showlegend=True,
-                ),
-                row = i,
-                col = 1,
+                )
             )
             # transaction counting trace
             fig.add_trace(
@@ -117,12 +105,8 @@ async def main():
                     x=timestamps,
                     y=tc.values,
                     mode="lines",
-                    name=f"Transaction Counting: {tc.delta} Slots",
-                    legendgroup=subplot_id,
-                    showlegend=True,
-                ),
-                row=i,
-                col=1,
+                    name=f"Transaction Volume: {tc.delta} Slots",
+                )
             )
             # traces[0].algorithm.time_build_up_window <- get average and display it
             # traces[0].algorithm.time_sliding_window <- get average and display it
@@ -135,10 +119,6 @@ async def main():
                 x = x_line,
                 line_width=1.2,
                 line_color="black",
-                col=1,
-                row=i,
-                legendgroup=subplot_id,
-                showlegend=True,
             )
 
             differences = numpy.divide(
@@ -159,42 +139,33 @@ async def main():
                     mode="lines",
                     name=f"Rolling Avg (Δ={wg.delta})",
                     line=dict(dash="dot", width=2),
-                    legendgroup=subplot_id,
-                    showlegend=True,
                 ),
-                row=i,
-                col=1,
-                secondary_y=True,
+                secondary_y=True
             )
 
             fig.update_yaxes(title_text=f"Transaction volume in USD",
-                             col=1,
-                             row=i,
                              secondary_y=False
                              )
-            fig.update_yaxes(title_text=f"Improvement in % of total volume",
-                             col=1,
-                             row=i,
+            fig.update_yaxes(title_text=f" Cumulative Wealth Gain in % of Total Volume",
                              secondary_y=True,
                              range=[0,101]
                              )
+            fig.update_layout(
+                title=f"Rolling Window Δ={wg.delta}",
+                legend_title="Metrics",
+                # Legend configuration
+                legend=dict(
+                    orientation="h",  # Horizontal orientation
+                    yanchor="top",  # Anchor the top of the legend box...
+                    y=-0.2,  # ...at negative 20% of the plot height (below x-axis)
+                    xanchor="center",  # Center horizontally
+                    x=0.5  # At the middle of the plot
+                )
+            )
 
-        fig.update_layout(
-            title="Dynamic Transaction Data Analysis",
-            height=400 * len(cumulative_wealth_gain),
-            hovermode="x unified",
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1,
-            ),
-            margin=dict(t=80, b=40),
-        )
-
-        fig.update_xaxes(title_text="Date")
-        fig.show()
+            fig.update_xaxes(title_text="Date")
+            path = PROJECT_ROOT / "data" / f"plot_delta_{wg.delta}.svg"
+            fig.write_image(path, scale=1)
 
         # analyse
     finally:

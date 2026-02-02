@@ -50,7 +50,7 @@ async def main():
                 batch_start + config["batch_size"],
                 config["end_block"],
             )
-            blocks = await dc.get_blocks(batch_start, batch_end)
+            await dc.make_blocks_in_db_available(batch_start,batch_end)
 
     finally:
         await dc.close()
