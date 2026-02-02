@@ -44,7 +44,5 @@ COIN_GECKO_API_KEY="xxx"
 
 ---
 ## Attribution
-Price data by CoinGecko // TODO: add logo and link if published
+Price data powered by [CoinGecko API](https://www.coingecko.com)
 
----
-## License  
