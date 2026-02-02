@@ -12,3 +12,4 @@ db.duckdb
 old_solution
 data/main.duckdb
 data/main.duckdb.wal
+data/main_old.duckdb
