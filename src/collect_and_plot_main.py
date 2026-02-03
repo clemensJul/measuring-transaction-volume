@@ -58,9 +58,9 @@ async def main():
 
         timestamps = []
 
-        end = config["start_block"] + (config["end_block"] - config["start_block"]) // 3
+        #end = config["start_block"] + (config["end_block"] - config["start_block"]) // 10
         progress = tqdm(
-                range(config["start_block"],end , config["batch_size"]),
+                range(config["start_block"],config["end_block"] , config["batch_size"]),
                 desc="Indexing blocks",
                 unit="batch",
         )
@@ -86,10 +86,7 @@ async def main():
                 timestamps.append(datetime.datetime.fromtimestamp(test_block["timestamp"]))
 
         for wg, tc in zip(cumulative_wealth_gain, transaction_counting):
-            fig = make_subplots(specs=[[{"secondary_y": True}]]
-                                
-
-                                )
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
             # wealth gain trace
             fig.add_trace(
                 go.Scatter(
@@ -108,10 +105,31 @@ async def main():
                     name=f"Transaction Volume: {tc.delta} Slots",
                 )
             )
-            # traces[0].algorithm.time_build_up_window <- get average and display it
-            # traces[0].algorithm.time_sliding_window <- get average and display it
-            # traces[1].algorithm.time_build_up_window <- get average and display it
-            # traces[1].algorithm.time_sliding_window <- get average and display it
+            wg_bu = numpy.array(wg.algorithm.time_build_up_window).mean()
+            wg_sw = numpy.array(wg.algorithm.time_sliding_window).mean()
+            tc_bu = numpy.array(tc.algorithm.time_build_up_window).mean()
+            tc_sw = numpy.array(tc.algorithm.time_sliding_window).mean()
+
+            stats_text = (
+                f"<b>Average time per operation</b><br>"
+                f"Cumulative Wealth Gain build-up: {wg_bu.microseconds} μs<br>"
+                f"Cumulative Wealth Gain sliding : {wg_sw.microseconds} μs<br>"
+                f"Total volume build-up: {tc_bu.microseconds} μs<br>"
+                f"Total volume sliding : {tc_sw.microseconds} μs"
+            )
+
+            fig.add_annotation(
+                x=0.01, y=0.99,
+                xref="paper", yref="paper",
+                xanchor="left", yanchor="top",
+                text=stats_text,
+                showarrow=False,
+                align="left",
+                bordercolor="black",
+                borderwidth=1,
+                bgcolor="rgba(255,255,255,0.85)",
+                font=dict(size=12),
+            )
 
             # line when full window is reached
             x_line = timestamps[0] + datetime.timedelta(seconds=12 * wg.delta)
@@ -151,15 +169,14 @@ async def main():
                              range=[0,101]
                              )
             fig.update_layout(
-                title=f"Rolling Window Δ={wg.delta}",
+                title=f"Transaction Volume vs Cumulative Wealth Gain with Δ window {wg.delta} Slots",
                 legend_title="Metrics",
-                # Legend configuration
                 legend=dict(
-                    orientation="h",  # Horizontal orientation
-                    yanchor="top",  # Anchor the top of the legend box...
-                    y=-0.2,  # ...at negative 20% of the plot height (below x-axis)
-                    xanchor="center",  # Center horizontally
-                    x=0.5  # At the middle of the plot
+                    orientation="h",
+                    yanchor="top",
+                    y=-0.2,
+                    xanchor="center",
+                    x=0.5
                 )
             )
 

@@ -218,7 +218,7 @@ class DataCollector:
         blocks_in_batch = []
         digests_in_batch = []
         transactions_in_batch = []
-        for block in gathered_blocks:
+        for i, block in enumerate(gathered_blocks):
             number = int(block["number"], 16)
             datetime_block = datetime.fromtimestamp(int(block["timestamp"], 16))
 
@@ -246,8 +246,6 @@ class DataCollector:
                                 False
                             ]
                         )
-                    digests_in_batch.append((number, coin["name"]))
-
                 # erc20
                 for log in transaction[1]["logs"]:
                     topics = log.get("topics", [])
@@ -294,8 +292,8 @@ class DataCollector:
                         tx[8] = True
                 transactions_in_block.extend(coin_movements_in_transaction)
             digestions = [
-                (number, val["name"])
-                for val in self.active_coins_dict.values()
+                (number, val)
+                for val in missing[i][1]
             ]
             if len(digestions) == self.num_active_coins:
                 blocks_in_batch.append((number, datetime_block.isoformat()))
@@ -309,12 +307,12 @@ class DataCollector:
         try:
             self.db.execute("BEGIN TRANSACTION")
             if not blocks_df.empty:
-                self.db.execute("INSERT OR IGNORE INTO blocks SELECT number, timestamp FROM blocks_df")
+                self.db.execute("INSERT INTO blocks SELECT number, timestamp FROM blocks_df")
             if not digests_df.empty:
-                self.db.execute("INSERT OR IGNORE INTO block_ingestions SELECT block_number, coin FROM digests_df")
+                self.db.execute("INSERT INTO block_ingestions SELECT block_number, coin FROM digests_df")
             if not tx_df.empty:
                 self.db.execute("""                                                  
-                        INSERT OR IGNORE INTO transactions (hash, log_number, block_number, coin, from_addr, to_addr, amount, usd_value , is_dex_swap)
+                        INSERT INTO transactions (hash, log_number, block_number, coin, from_addr, to_addr, amount, usd_value , is_dex_swap)
                         SELECT hash, log_number, block_number, coin, from_addr, to_addr, amount, usd_value, is_dex_swap FROM tx_df
                     """)
             self.db.execute("COMMIT")
