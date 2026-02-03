@@ -42,16 +42,18 @@ dex_events:
   # Fluid
   - "Swap(address,address,int256,int256,uint256,uint128,int24)"
 
+
+# in seconds
 analysis:
   cumulative_wealth_gain:
-    - 8
-    - 16
-    - 32
-    - 7200
-    - 50400
+    - 24
+    - 96
+    - 192
+    - 86400
+    - 604800
   transaction_counting:
-    - 8
-    - 16
-    - 32
-    - 7200
-    - 50400
+    - 24
+    - 96
+    - 192
+    - 86400
+    - 604800

@@ -1,11 +1,14 @@
 import asyncio
 from pathlib import Path
-
+import gc
 import numpy
 import yaml
 import os
 from tqdm import tqdm
 from dotenv import load_dotenv
+from typing_extensions import override
+from xxlimited_35 import Null
+
 from collect.data_manager import DataCollector
 from collect.cancellation_token import CancellationToken
 import plotly.graph_objects as go
@@ -58,7 +61,7 @@ async def main():
 
         timestamps = []
 
-        #end = config["start_block"] + (config["end_block"] - config["start_block"]) // 10
+        end = config["start_block"] + 700
         progress = tqdm(
                 range(config["start_block"],config["end_block"] , config["batch_size"]),
                 desc="Indexing blocks",
@@ -85,6 +88,13 @@ async def main():
                     tc.run_on_block(test_block)
                 timestamps.append(datetime.datetime.fromtimestamp(test_block["timestamp"]))
 
+        # garbage collect
+        for wg in cumulative_wealth_gain:
+            wg.algorithm.algorithm.previous_tx = None
+        for tc in transaction_counting:
+            tc.algorithm.algorithm.previous_tx = None
+        gc.collect()
+
         for wg, tc in zip(cumulative_wealth_gain, transaction_counting):
             fig = make_subplots(specs=[[{"secondary_y": True}]])
             # wealth gain trace
@@ -93,7 +103,7 @@ async def main():
                     x=timestamps,
                     y=wg.values,
                     mode="lines",
-                    name=f"Cumulative Wealth Gain: {wg.delta} slots",
+                    name=f"Cumulative Wealth Gain: {wg.delta // 12} Slots",
                 )
             )
             # transaction counting trace
@@ -102,7 +112,7 @@ async def main():
                     x=timestamps,
                     y=tc.values,
                     mode="lines",
-                    name=f"Transaction Volume: {tc.delta} Slots",
+                    name=f"Transaction Volume: {tc.delta // 12} Slots",
                 )
             )
             wg_bu = numpy.array(wg.algorithm.time_build_up_window).mean()
@@ -111,7 +121,7 @@ async def main():
             tc_sw = numpy.array(tc.algorithm.time_sliding_window).mean()
 
             stats_text = (
-                f"<b>Average time per operation</b><br>"
+                f"<b>Average operation time</b><br>"
                 f"Cumulative Wealth Gain build-up: {wg_bu.microseconds} μs<br>"
                 f"Cumulative Wealth Gain sliding : {wg_sw.microseconds} μs<br>"
                 f"Total volume build-up: {tc_bu.microseconds} μs<br>"
@@ -126,13 +136,13 @@ async def main():
                 showarrow=False,
                 align="left",
                 bordercolor="black",
-                borderwidth=1,
+                borderwidth=0.5,
                 bgcolor="rgba(255,255,255,0.85)",
-                font=dict(size=12),
+                font=dict(size=10),
             )
 
             # line when full window is reached
-            x_line = timestamps[0] + datetime.timedelta(seconds=12 * wg.delta)
+            x_line = timestamps[0] + datetime.timedelta(seconds=wg.delta)
             fig.add_vline(
                 x = x_line,
                 line_width=1.2,
@@ -146,7 +156,7 @@ async def main():
                 where=tc.values != 0
             )
 
-            window = max(wg.delta, 1000)
+            window = max(wg.delta // 12, 3600)
             kernel = numpy.ones(window) / window
             rolling_avg = numpy.convolve(differences, kernel, mode="valid")
             rolling_timestamps = timestamps[window - 1:]
@@ -155,21 +165,25 @@ async def main():
                     x=rolling_timestamps,
                     y=rolling_avg * 100,
                     mode="lines",
-                    name=f"Rolling Avg (Δ={wg.delta})",
+                    name=f"Rolling Average {window} Slots",
                     line=dict(dash="dot", width=2),
                 ),
                 secondary_y=True
             )
+            max_val = numpy.max(tc.values)
+            padding_factor = 1.3
+            upper_limit = max_val * padding_factor
 
-            fig.update_yaxes(title_text=f"Transaction volume in USD",
-                             secondary_y=False
+            fig.update_yaxes(title_text=f"Window volume in USD",
+                             secondary_y=False,
+                             range=[0,upper_limit]
                              )
             fig.update_yaxes(title_text=f" Cumulative Wealth Gain in % of Total Volume",
                              secondary_y=True,
-                             range=[0,101]
+                             range=[0,115]
                              )
             fig.update_layout(
-                title=f"Transaction Volume vs Cumulative Wealth Gain with Δ window {wg.delta} Slots",
+                title=f"Transaction Volume vs Cumulative Wealth Gain with Δ window {wg.delta // 12} Slots",
                 legend_title="Metrics",
                 legend=dict(
                     orientation="h",
@@ -177,7 +191,7 @@ async def main():
                     y=-0.2,
                     xanchor="center",
                     x=0.5
-                )
+                ),
             )
 
             fig.update_xaxes(title_text="Date")
