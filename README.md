@@ -14,7 +14,7 @@ Information about the total transaction volume on the Ethereum blockchain can be
 - RPC Client code to extract data from a to you available Ethereum validator node. 
 - Two different algorithms used to compute the transaction volume
 - Plotting tools to visualise the results
-
+---
 The purpose of this repository is to compare the effectiveness of using a smart algorithm to count transaction volume. Limiting the transaction volume
 could be a useful tool in game theoretic blockchain protocols. Instead of counting the total transaction volume a smarter algorithm could be deployed that
 captures a more realistic loss of value that is possible in a given timeframe Δ
