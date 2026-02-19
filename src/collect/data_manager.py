@@ -73,15 +73,19 @@ class DataCollector:
                 SELECT
                   b.number,
                   b.timestamp,
-                  list(
-                    struct_pack(
-                      coin        := t.coin,
-                      "from"      := t."from_addr",
-                      "to"        := t."to_addr",
-                      amount      := t.amount,
-                      usd_value   := t.usd_value,
-                      is_dex_swap := t.is_dex_swap              
-                    )
+                   coalesce(
+                    list(
+                        struct_pack(
+                          hash        := t.hash,    
+                          coin        := t.coin,
+                          "from"      := t.from_addr,
+                          "to"        := t.to_addr,
+                          amount      := t.amount,
+                          usd_value   := t.usd_value,
+                          is_dex_swap := t.is_dex_swap              
+                        )
+                    ) FILTER (WHERE t.hash IS NOT NULL),
+                    []                   
                   ) AS transactions
                 FROM blocks b
                 LEFT JOIN transactions t
@@ -100,14 +104,15 @@ class DataCollector:
               coalesce(
                 list(
                   struct_pack(
+                    hash        := t.hash,    
                     coin        := t.coin,
-                    "from"      := t."from_addr",
-                    "to"        := t."to_addr",
+                    "from"      := t.from_addr,
+                    "to"        := t.to_addr,
                     amount      := t.amount,
                     usd_value   := t.usd_value,
                     is_dex_swap := t.is_dex_swap
                   )
-                ),
+                ) FILTER (WHERE t.hash IS NOT NULL),
                 []
               ) AS transactions
             FROM blocks b
@@ -241,7 +246,7 @@ class DataCollector:
                                 coin["name"],
                                 tx["from"].lower(),
                                 tx["to"].lower(),
-                                min(int(tx["value"], 16),BIGINT_MAX),
+                                min(int(tx["value"], 16),BIGINT_MAX), 
                                 await self.get_usd_value(coin, datetime_block, int(tx["value"], 16), ),
                                 False
                             ]

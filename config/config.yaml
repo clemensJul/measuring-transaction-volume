@@ -1,4 +1,4 @@
-
+#start_block: 22555743             # one week before
 start_block: 22606143            # June 1st 2025
 end_block: 22829343              # June 30th 2025
 #end_block: 23264566              # August 31st 2025
@@ -46,6 +46,12 @@ dex_events:
 # in seconds
 analysis:
   cumulative_wealth_gain:
+    - 24
+    - 96
+    - 192
+    - 86400
+    - 604800
+  defi_transactions:
     - 24
     - 96
     - 192

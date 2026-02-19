@@ -15,6 +15,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from processing.alg_cumulative_wealth_gain import CumulativeWealthGain
 from processing.alg_transaction_counting import TransactionCounting
+from processing.alg_defi_transactions import DefiTransactions
 from analysis.speed_comparision import SpeedComparison
 from analysis.value_comparision import ValueComparison
 import signal
@@ -22,6 +23,11 @@ import datetime
 
 THRESHOLD_D = 32 * 10 ** 18
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+seconds_to_string = {
+    3600 : "one hour",
+    86400 : "one day",
+    604800 : "one week"
+}
 
 def get_config() -> dict:
     load_dotenv(PROJECT_ROOT / ".env")
@@ -50,6 +56,7 @@ async def main():
 
     try:
 
+        # analysis
         cumulative_wealth_gain = [
             ValueComparison(SpeedComparison(CumulativeWealthGain(n),n),n)
             for n in config["analysis"]["cumulative_wealth_gain"]
@@ -58,12 +65,18 @@ async def main():
             ValueComparison(SpeedComparison(TransactionCounting(n),n),n)
             for n in config["analysis"]["transaction_counting"]
         ]
+        defi_transactions = [
+            ValueComparison(SpeedComparison(DefiTransactions(n), n), n)
+            for n in config["analysis"]["defi_transactions"]
+        ]
 
         timestamps = []
 
         end = config["start_block"] + 700
         progress = tqdm(
-                range(config["start_block"],config["end_block"] , config["batch_size"]),
+                range(config["start_block"],
+                      config["end_block"],
+                      config["batch_size"]),
                 desc="Indexing blocks",
                 unit="batch",
         )
@@ -80,8 +93,10 @@ async def main():
             for block in blocks:
                 test_block = {
                     "timestamp": block[1].timestamp(),
-                    "transactions" : list(filter(lambda x: x["is_dex_swap"] == False, block[2]))
+                    "transactions" : block[2] if block[2] is not None else [],
                 }
+                for dt in defi_transactions:
+                    dt.run_on_block(test_block)
                 for wg in cumulative_wealth_gain:
                     wg.run_on_block(test_block)
                 for tc in transaction_counting:
@@ -95,81 +110,103 @@ async def main():
             tc.algorithm.algorithm.previous_tx = None
         gc.collect()
 
-        for wg, tc in zip(cumulative_wealth_gain, transaction_counting):
+
+        # print to .svg
+        for wg, tc, dt in zip(cumulative_wealth_gain, transaction_counting, defi_transactions):
+            n_of_slots = wg.delta // 12
+            string = seconds_to_string[wg.delta] if wg.delta in seconds_to_string else f"{n_of_slots} Slots"
             fig = make_subplots(specs=[[{"secondary_y": True}]])
-            # wealth gain trace
-            fig.add_trace(
-                go.Scatter(
-                    x=timestamps,
-                    y=wg.values,
-                    mode="lines",
-                    name=f"Cumulative Wealth Gain: {wg.delta // 12} Slots",
-                )
-            )
             # transaction counting trace
             fig.add_trace(
                 go.Scatter(
-                    x=timestamps,
-                    y=tc.values,
+                    x=timestamps[n_of_slots:],
+                    y=tc.values[n_of_slots:],
                     mode="lines",
-                    name=f"Transaction Volume: {tc.delta // 12} Slots",
+                    name=f"Transaction Volume: {string}",
                 )
             )
+            # wealth gain trace
+            fig.add_trace(
+                go.Scatter(
+                    x=timestamps[n_of_slots:],
+                    y=wg.values[n_of_slots:],
+                    mode="lines",
+                    name=f"Cumulative Wealth Gain: {string}",
+                )
+            )
+            # defi
+            fig.add_trace(
+                go.Scatter(
+                    x=timestamps[n_of_slots:],
+                    y=dt.values[n_of_slots:],
+                    mode="lines",
+                    name=f"DeFi Transaction Volume: {string}",
+                )
+            )
+
             wg_bu = numpy.array(wg.algorithm.time_build_up_window).mean()
             wg_sw = numpy.array(wg.algorithm.time_sliding_window).mean()
             tc_bu = numpy.array(tc.algorithm.time_build_up_window).mean()
             tc_sw = numpy.array(tc.algorithm.time_sliding_window).mean()
+            df_bu = numpy.array(dt.algorithm.time_build_up_window).mean()
+            df_sw = numpy.array(dt.algorithm.time_sliding_window).mean()
 
-            stats_text = (
-                f"<b>Average operation time</b><br>"
-                f"Cumulative Wealth Gain build-up: {wg_bu.microseconds} μs<br>"
-                f"Cumulative Wealth Gain sliding : {wg_sw.microseconds} μs<br>"
-                f"Total volume build-up: {tc_bu.microseconds} μs<br>"
-                f"Total volume sliding : {tc_sw.microseconds} μs"
-            )
+            print(f"""
+                    Average operation time of {n_of_slots}
+                    Cumulative Wealth Gain build-up: {wg_bu.total_seconds() * 1000} ms
+                    Total volume build-up: {tc_bu.total_seconds() * 1000} ms
+                    DeFi Transaction Volume build-up: {df_bu.total_seconds() * 1000} ms
+                    
+                    Cumulative Wealth Gain sliding : {wg_sw.total_seconds() * 1000} ms
+                    Total volume sliding : {tc_sw.total_seconds() * 1000} ms
+                    DeFi Transaction Volume sliding : {df_sw.total_seconds() * 1000} ms
+                  """)
 
-            fig.add_annotation(
-                x=0.01, y=0.99,
-                xref="paper", yref="paper",
-                xanchor="left", yanchor="top",
-                text=stats_text,
-                showarrow=False,
-                align="left",
-                bordercolor="black",
-                borderwidth=0.5,
-                bgcolor="rgba(255,255,255,0.85)",
-                font=dict(size=10),
-            )
-
-            # line when full window is reached
-            x_line = timestamps[0] + datetime.timedelta(seconds=wg.delta)
-            fig.add_vline(
-                x = x_line,
-                line_width=1.2,
-                line_color="black",
-            )
-
-            differences = numpy.divide(
-                wg.values,
-                tc.values,
-                out=numpy.zeros_like(wg.values, dtype=float),
-                where=tc.values != 0
-            )
+            wg_arr = numpy.asarray(wg.values, dtype=float)
+            tc_arr = numpy.asarray(tc.values, dtype=float)
+            dt_arr = numpy.asarray(dt.values, dtype=float)
 
             window = max(wg.delta // 12, 3600)
-            kernel = numpy.ones(window) / window
-            rolling_avg = numpy.convolve(differences, kernel, mode="valid")
-            rolling_timestamps = timestamps[window - 1:]
+            kernel = numpy.ones(window, dtype=float)
+
+            wg_sum = numpy.convolve(wg_arr, kernel, mode="valid")
+            tc_sum = numpy.convolve(tc_arr, kernel, mode="valid")
+            dt_sum = numpy.convolve(dt_arr, kernel, mode="valid")
+
+            rolling_pct_wg = numpy.divide(
+                wg_sum, tc_sum,
+                out=numpy.full_like(wg_sum, numpy.nan),
+                where=tc_sum != 0
+            ) * 100.0
+            rolling_pct_dt = numpy.divide(
+                dt_sum, tc_sum,
+                out=numpy.full_like(dt_sum, numpy.nan),
+                where=tc_sum != 0
+            ) * 100.0
+            cut_timestamps = timestamps[window - 1:]
+            # wealth gain
             fig.add_trace(
                 go.Scatter(
-                    x=rolling_timestamps,
-                    y=rolling_avg * 100,
+                    x=cut_timestamps,
+                    y=rolling_pct_wg,
                     mode="lines",
-                    name=f"Rolling Average {window} Slots",
+                    name=f"CWG rolling Average in % of total volume: {'one hour' if n_of_slots < 3600 else string}",
                     line=dict(dash="dot", width=2),
                 ),
                 secondary_y=True
             )
+
+            fig.add_trace(
+                go.Scatter(
+                    x=cut_timestamps,
+                    y=rolling_pct_dt,
+                    mode="lines",
+                    name=f"DeFi rolling Average in % of total volume: {'one hour' if n_of_slots < 3600 else string}",
+                    line=dict(dash="dot", width=2),
+                ),
+                secondary_y=True
+            )
+
             max_val = numpy.max(tc.values)
             padding_factor = 1.3
             upper_limit = max_val * padding_factor
@@ -178,12 +215,12 @@ async def main():
                              secondary_y=False,
                              range=[0,upper_limit]
                              )
-            fig.update_yaxes(title_text=f" Cumulative Wealth Gain in % of Total Volume",
+            fig.update_yaxes(title_text=f"Computed volume % of Transaction Volume",
                              secondary_y=True,
                              range=[0,115]
                              )
             fig.update_layout(
-                title=f"Transaction Volume vs Cumulative Wealth Gain with Δ window {wg.delta // 12} Slots",
+                title=f"Algorithm comparison in Δ window {string}",
                 legend_title="Metrics",
                 legend=dict(
                     orientation="h",
@@ -194,11 +231,10 @@ async def main():
                 ),
             )
 
-            fig.update_xaxes(title_text="Date")
-            path = PROJECT_ROOT / "data" / f"plot_delta_{wg.delta}.svg"
+            fig.update_xaxes(title_text="Date"
+                             )
+            path = PROJECT_ROOT / "data" / f"plot_delta_{n_of_slots}.svg"
             fig.write_image(path, scale=1)
-
-        # analyse
     finally:
         await dc.close()
 

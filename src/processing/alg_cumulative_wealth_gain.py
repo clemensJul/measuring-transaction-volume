@@ -24,7 +24,7 @@ class CumulativeWealthGain:
         self.gain_total -= block["cached_gain"]
 
 
-    def execute_txs(self, block) -> int:
+    def execute_txs(self, block):
         block_gain = 0
         for tx in block["transactions"]:
             g = self.calc_gain(tx["from"], tx["to"], tx["usd_value"])
