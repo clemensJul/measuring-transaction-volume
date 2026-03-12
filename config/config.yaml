@@ -1,6 +1,6 @@
 #start_block: 22555743             # one week before
 start_block: 22606143            # June 1st 2025
-end_block: 22829343              # June 30th 2025
+end_block:  22829343              # June 30th 2025
 #end_block: 23264566              # August 31st 2025
 batch_size: 100
 
@@ -49,17 +49,24 @@ analysis:
     - 24
     - 96
     - 192
+    - 768
+    - 1536
     - 86400
     - 604800
   defi_transactions:
     - 24
     - 96
     - 192
+    - 768
+    - 1536
     - 86400
     - 604800
   transaction_counting:
     - 24
     - 96
     - 192
+    - 768
+    - 1536
     - 86400
     - 604800
+
