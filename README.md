@@ -43,7 +43,7 @@ You need access to a Validator node and a coin gecko api key for the daily price
 In the .env file you need to set theses keys. The price data to determine the value of each transaction is taken daily using a CoinGecko.
 
 ```
-RCP_URL="localhost:5000"
+RCP_URL="localhost:xxxx"
 COIN_GECKO_API_KEY="xxx"
 ```
 
